@@ -433,6 +433,50 @@ public class OkProxySelectorTest {
         }
     }
 
+    @Test(timeout = 15000)
+    public void retriesAndRedirectsShareFollowUpBudget() throws Exception {
+        String[] replies = new String[22];
+        for (int i = 0; i < 20; i += 2) {
+            replies[i] = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 0\r\n";
+            replies[i + 1] = "HTTP/1.1 302 Found\r\nLocation: /stream\r\n";
+        }
+        replies[20] = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 0\r\n";
+        replies[21] = "HTTP/1.1 200 OK\r\n";
+        try (ProxyServer server = new ProxyServer(replies)) {
+            addRule("ott.example.com", server.proxy());
+            assertThrows(ProtocolException.class,
+                    () -> client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute());
+            assertEquals(22, server.requests().size());
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void proxyCredentialsSupportEmptyPasswordColonsAndUtf8() throws Exception {
+        for (String userInfo : List.of("user", "user:pass:word", "用戶:密碼")) {
+            try (ProxyServer server = new ProxyServer("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=proxy\r\n", "HTTP/1.1 200 OK\r\n")) {
+                selector.getProxy().clear();
+                addRule("ott.example.com", server.proxy(), userInfo);
+                try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                    assertEquals(200, response.code());
+                }
+                String plain = userInfo.contains(":") ? userInfo : userInfo + ":";
+                String expected = "Proxy-Authorization: Basic " + java.util.Base64.getEncoder().encodeToString(plain.getBytes(StandardCharsets.UTF_8));
+                assertTrue(server.headers(1).contains(expected));
+            }
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void missingProxyCredentialsReturnsChallengeWithoutRetry() throws Exception {
+        try (ProxyServer server = new ProxyServer("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=proxy\r\n")) {
+            addRule("ott.example.com", server.proxy());
+            try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                assertEquals(407, response.code());
+            }
+            assertEquals(1, server.requests().size());
+        }
+    }
+
     private static Authenticator currentAuthenticator() {
         // Android's compile-time API omits this JDK method; unit tests run on Java 21.
         try {

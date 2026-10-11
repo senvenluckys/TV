@@ -78,7 +78,9 @@ final class ProxyRedirectInterceptor implements Interceptor {
                 builder.method(method, response.request().body());
             }
         }
-        if (!source.scheme().equals(target.scheme()) || !source.host().equals(target.host()) || source.port() != target.port()) builder.removeHeader("Authorization");
+        if (!source.scheme().equals(target.scheme()) || !source.host().equals(target.host()) || source.port() != target.port()) {
+            builder.removeHeader("Authorization").removeHeader("Host");
+        }
         return builder.url(target).build();
     }
 

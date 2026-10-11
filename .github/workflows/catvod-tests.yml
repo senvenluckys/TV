@@ -2,7 +2,7 @@ name: catvod unit tests
 
 on:
   push:
-    branches: [fongmi, 'codex/catvod-*']
+    branches: [fongmi]
     paths:
       - 'catvod/**'
       - 'gradle/**'
