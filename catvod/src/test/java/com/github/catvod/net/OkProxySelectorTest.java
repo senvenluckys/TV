@@ -41,7 +41,7 @@ import okhttp3.Response;
 
 public class OkProxySelectorTest {
 
-    private final Authenticator originalAuthenticator = Authenticator.getDefault();
+    private final Authenticator originalAuthenticator = currentAuthenticator();
     private final ProxySelector originalSelector = ProxySelector.getDefault();
     private final OkProxySelector selector = new OkProxySelector();
 
@@ -394,6 +394,51 @@ public class OkProxySelectorTest {
                 }
                 assertEquals(1, server.requests().size());
             }
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void ruleSwitchOnSameProxyEndpointUsesNewCredentials() throws Exception {
+        String challenge = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=proxy\r\n";
+        try (ProxyServer server = new ProxyServer(challenge,
+                "HTTP/1.1 302 Found\r\nLocation: http://cdn.example.com/stream\r\n", challenge, "HTTP/1.1 200 OK\r\n")) {
+            addRule("ott.example.com", server.proxy(), "source:password");
+            addRule("cdn.example.com", server.proxy(), "target:password");
+            try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                assertEquals(200, response.code());
+            }
+            assertTrue(server.headers(1).contains("Proxy-Authorization: Basic c291cmNlOnBhc3N3b3Jk"));
+            assertFalse(server.headers(2).stream().anyMatch(h -> h.startsWith("Proxy-Authorization:")));
+            assertTrue(server.headers(3).contains("Proxy-Authorization: Basic dGFyZ2V0OnBhc3N3b3Jk"));
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void twentyRedirectsSucceedAndPreserveFullHistory() throws Exception {
+        String[] replies = new String[21];
+        java.util.Arrays.fill(replies, "HTTP/1.1 302 Found\r\nLocation: /stream\r\n");
+        replies[20] = "HTTP/1.1 200 OK\r\n";
+        try (ProxyServer server = new ProxyServer(replies)) {
+            addRule("ott.example.com", server.proxy());
+            try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                assertEquals(200, response.code());
+                int count = 0;
+                for (Response prior = response.priorResponse(); prior != null; prior = prior.priorResponse()) {
+                    assertEquals(302, prior.code());
+                    count++;
+                }
+                assertEquals(20, count);
+            }
+            assertEquals(21, server.requests().size());
+        }
+    }
+
+    private static Authenticator currentAuthenticator() {
+        // Android's compile-time API omits this JDK method; unit tests run on Java 21.
+        try {
+            return (Authenticator) Authenticator.class.getMethod("getDefault").invoke(null);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
         }
     }
 
