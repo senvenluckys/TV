@@ -1,0 +1,56 @@
+name: catvod unit tests
+
+on:
+  push:
+    branches: [fongmi, 'codex/catvod-*']
+    paths:
+      - 'catvod/**'
+      - 'gradle/**'
+      - '**/*.gradle'
+      - 'gradle.properties'
+      - 'gradlew*'
+      - '.github/workflows/catvod-tests.yml'
+  pull_request:
+    branches: [fongmi]
+    paths:
+      - 'catvod/**'
+      - 'gradle/**'
+      - '**/*.gradle'
+      - 'gradle.properties'
+      - 'gradlew*'
+      - '.github/workflows/catvod-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catvod-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: jetbrains
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build catvod and run JVM tests
+        run: bash gradlew :catvod:assembleDebug :catvod:testDebugUnitTest --no-daemon --stacktrace
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catvod-test-reports
+          path: |
+            catvod/build/reports/tests/
+            catvod/build/test-results/
+          if-no-files-found: warn
+          retention-days: 14
