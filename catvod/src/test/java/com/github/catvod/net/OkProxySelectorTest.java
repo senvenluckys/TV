@@ -6,6 +6,7 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertThrows;
 
 import com.github.catvod.bean.Proxy;
 
@@ -14,6 +15,9 @@ import org.junit.Test;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.net.Authenticator;
+import java.net.ProxySelector;
+import java.net.ProtocolException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -28,6 +32,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import okhttp3.MediaType;
+import okio.BufferedSink;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
@@ -35,14 +41,18 @@ import okhttp3.Response;
 
 public class OkProxySelectorTest {
 
+    private final Authenticator originalAuthenticator = currentAuthenticator();
+    private final ProxySelector originalSelector = ProxySelector.getDefault();
     private final OkProxySelector selector = new OkProxySelector();
 
     @After
     public void tearDown() {
         selector.clear();
+        Authenticator.setDefault(originalAuthenticator);
+        ProxySelector.setDefault(originalSelector);
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void redirectChainCarriesProxyAcrossIpTargets() throws Exception {
         java.net.Proxy proxy = proxy(java.net.Proxy.Type.HTTP, 8080);
         addRule("ott.example.com", proxy);
@@ -55,7 +65,7 @@ public class OkProxySelectorTest {
         assertSame(source.rule(), second.rule());
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void redirectUsesTargetHostRule() throws Exception {
         java.net.Proxy sourceProxy = proxy(java.net.Proxy.Type.HTTP, 8080);
         java.net.Proxy targetProxy = proxy(java.net.Proxy.Type.SOCKS, 1080);
@@ -70,7 +80,7 @@ public class OkProxySelectorTest {
         assertNotEquals(source, target);
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void sameIpWithDifferentSourceRulesUsesDifferentPoolPolicy() throws Exception {
         java.net.Proxy firstProxy = proxy(java.net.Proxy.Type.HTTP, 8080);
         java.net.Proxy secondProxy = proxy(java.net.Proxy.Type.HTTP, 8081);
@@ -85,7 +95,7 @@ public class OkProxySelectorTest {
         assertNotEquals(first, second);
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void redirectDoesNotProxyLoopbackTarget() throws Exception {
         java.net.Proxy proxy = proxy(java.net.Proxy.Type.HTTP, 8080);
         addRule("ott.example.com", proxy);
@@ -96,7 +106,7 @@ public class OkProxySelectorTest {
         assertNotEquals(List.of(proxy), target.select(new URI("http://127.0.0.1/stream")));
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void clearOnAnotherThreadInvalidatesInheritedRule() throws Exception {
         java.net.Proxy proxy = proxy(java.net.Proxy.Type.HTTP, 8080);
         addRule("ott.example.com", proxy);
@@ -109,7 +119,7 @@ public class OkProxySelectorTest {
         assertNull(selector.policy(new URI("http://233.1.2.3/stream"), source).rule());
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void actualRedirectChainStaysOnHttpProxy() throws Exception {
         try (ProxyServer server = new ProxyServer(
                 "HTTP/1.1 302 Found\r\nLocation: http://233.1.2.3/stream\r\n",
@@ -124,7 +134,7 @@ public class OkProxySelectorTest {
         }
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void retryAfterRedirectStaysOnHttpProxy() throws Exception {
         try (ProxyServer server = new ProxyServer(
                 "HTTP/1.1 302 Found\r\nLocation: http://233.1.2.3/stream\r\n",
@@ -140,7 +150,7 @@ public class OkProxySelectorTest {
         }
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void proxyAuthenticationAfterRedirectKeepsProxyRule() throws Exception {
         try (ProxyServer server = new ProxyServer(
                 "HTTP/1.1 302 Found\r\nLocation: http://233.1.2.3/stream\r\n",
@@ -155,7 +165,7 @@ public class OkProxySelectorTest {
         }
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void redirectToDifferentProxyDoesNotForwardOldCredentials() throws Exception {
         try (ProxyServer source = new ProxyServer(
                 "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=source\r\n",
@@ -173,7 +183,7 @@ public class OkProxySelectorTest {
         }
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void warmDirectConnectionDoesNotBypassRedirectProxy() throws Exception {
         try (DirectServer direct = new DirectServer(); ProxyServer server = new ProxyServer(
                 "HTTP/1.1 302 Found\r\nLocation: " + direct.url() + "\r\n",
@@ -191,7 +201,7 @@ public class OkProxySelectorTest {
         }
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void noRedirectClientReturnsRedirectResponse() throws Exception {
         try (ProxyServer server = new ProxyServer("HTTP/1.1 302 Found\r\nLocation: http://233.1.2.3/stream\r\n")) {
             addRule("ott.example.com", server.proxy());
@@ -204,7 +214,7 @@ public class OkProxySelectorTest {
         }
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void crossSchemeRedirectRespectsClientSetting() throws Exception {
         try (ProxyServer server = new ProxyServer("HTTP/1.1 302 Found\r\nLocation: https://233.1.2.3/stream\r\n")) {
             addRule("ott.example.com", server.proxy());
@@ -216,7 +226,7 @@ public class OkProxySelectorTest {
         }
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void redirect302ChangesPostToGetAndDropsCrossHostAuthorization() throws Exception {
         try (ProxyServer server = new ProxyServer("HTTP/1.1 302 Found\r\nLocation: http://233.1.2.3/stream\r\n", "HTTP/1.1 200 OK\r\n")) {
             addRule("ott.example.com", server.proxy());
@@ -230,7 +240,7 @@ public class OkProxySelectorTest {
         }
     }
 
-    @Test
+    @Test(timeout = 15000)
     public void redirect307PreservesPostMethod() throws Exception {
         try (ProxyServer server = new ProxyServer("HTTP/1.1 307 Temporary Redirect\r\nLocation: http://233.1.2.3/stream\r\n", "HTTP/1.1 200 OK\r\n")) {
             addRule("ott.example.com", server.proxy());
@@ -242,8 +252,242 @@ public class OkProxySelectorTest {
         }
     }
 
+    @Test(timeout = 15000)
+    public void redirectLoopStopsAfterTwentyFollowUps() throws Exception {
+        String[] replies = new String[21];
+        java.util.Arrays.fill(replies, "HTTP/1.1 302 Found\r\nLocation: /live\r\n");
+        try (ProxyServer server = new ProxyServer(replies)) {
+            addRule("ott.example.com", server.proxy());
+            ProtocolException error = assertThrows(ProtocolException.class,
+                    () -> client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute());
+            assertTrue(error.getMessage().contains("Too many follow-up requests"));
+            assertEquals(21, server.requests().size());
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void rejectedProxyCredentialsAreNotRetriedForever() throws Exception {
+        String challenge = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=proxy\r\n";
+        try (ProxyServer server = new ProxyServer(challenge, challenge)) {
+            addRule("ott.example.com", server.proxy(), "user:password");
+            try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                assertEquals(407, response.code());
+            }
+            assertEquals(2, server.requests().size());
+            assertTrue(server.headers(1).contains("Proxy-Authorization: Basic dXNlcjpwYXNzd29yZA=="));
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void targetProxyChallengeUsesTargetCredentials() throws Exception {
+        String challenge = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=proxy\r\n";
+        try (ProxyServer source = new ProxyServer(challenge, "HTTP/1.1 302 Found\r\nLocation: http://cdn.example.com/stream\r\n");
+             ProxyServer target = new ProxyServer(challenge, "HTTP/1.1 200 OK\r\n")) {
+            addRule("ott.example.com", source.proxy(), "source:password");
+            addRule("cdn.example.com", target.proxy(), "target:password");
+            try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                assertEquals(200, response.code());
+            }
+            assertFalse(target.headers(0).stream().anyMatch(h -> h.startsWith("Proxy-Authorization:")));
+            assertTrue(target.headers(1).contains("Proxy-Authorization: Basic dGFyZ2V0OnBhc3N3b3Jk"));
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void explicitDirectRuleDropsProxyCredentials() throws Exception {
+        try (DirectServer direct = new DirectServer();
+             ProxyServer source = new ProxyServer("HTTP/1.1 302 Found\r\nLocation: " + direct.url() + "\r\n")) {
+            addRule("ott.example.com", source.proxy(), "source:password");
+            addRule("127.0.0.2", java.net.Proxy.NO_PROXY);
+            Request request = new Request.Builder().url("http://ott.example.com/live")
+                    .header("Proxy-Authorization", "Basic secret").build();
+            try (Response response = client().newCall(request).execute()) {
+                assertEquals(200, response.code());
+                assertNull(response.request().header("Proxy-Authorization"));
+            }
+            assertEquals(1, source.requests().size());
+            assertEquals(List.of("GET /stream HTTP/1.1"), direct.requests());
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void sameOriginKeepsAuthorizationAndResolvesRelativeLocation() throws Exception {
+        try (ProxyServer server = new ProxyServer("HTTP/1.1 302 Found\r\nLocation: /stream\r\n", "HTTP/1.1 200 OK\r\n")) {
+            addRule("ott.example.com", server.proxy());
+            Request request = new Request.Builder().url("http://ott.example.com/live").header("Authorization", "Bearer secret").build();
+            try (Response response = client().newCall(request).execute()) {
+                assertEquals(200, response.code());
+            }
+            assertTrue(server.headers(1).contains("Authorization: Bearer secret"));
+            assertEquals("GET http://ott.example.com/stream HTTP/1.1", server.requests().get(1));
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void crossOriginDropsExplicitHostAndAuthorization() throws Exception {
+        for (String target : List.of("http://cdn.example.com/stream", "http://ott.example.com:8081/stream")) {
+            try (ProxyServer server = new ProxyServer("HTTP/1.1 302 Found\r\nLocation: " + target + "\r\n", "HTTP/1.1 200 OK\r\n")) {
+                selector.getProxy().clear();
+                addRule("ott.example.com", server.proxy());
+                Request request = new Request.Builder().url("http://ott.example.com/live")
+                        .header("Host", "ott.example.com").header("Authorization", "Bearer secret").build();
+                try (Response response = client().newCall(request).execute()) {
+                    assertEquals(200, response.code());
+                }
+                assertFalse(server.headers(1).contains("Authorization: Bearer secret"));
+                assertFalse(server.headers(1).contains("Host: ott.example.com"));
+            }
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void redirectStatusCodesHandleNonEmptyPostBodies() throws Exception {
+        for (int code : new int[]{300, 301, 302, 303, 307, 308}) {
+            boolean preserve = code == 307 || code == 308;
+            try (ProxyServer server = new ProxyServer("HTTP/1.1 " + code + " Redirect\r\nLocation: /stream\r\n", "HTTP/1.1 200 OK\r\n")) {
+                selector.getProxy().clear();
+                addRule("ott.example.com", server.proxy());
+                Request request = new Request.Builder().url("http://ott.example.com/live")
+                        .post(RequestBody.create("payload", MediaType.get("text/plain"))).build();
+                try (Response response = client().newCall(request).execute()) {
+                    assertEquals(200, response.code());
+                }
+                assertEquals((preserve ? "POST" : "GET") + " http://ott.example.com/stream HTTP/1.1", server.requests().get(1));
+                assertEquals("payload", server.body(0));
+                assertEquals(preserve ? "payload" : "", server.body(1));
+                if (!preserve) {
+                    assertFalse(server.headers(1).stream().anyMatch(h -> h.startsWith("Content-Type:") || h.startsWith("Content-Length:") || h.startsWith("Transfer-Encoding:")));
+                }
+            }
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void oneShotBodyIsNotReplayedOn307Or308() throws Exception {
+        for (int code : new int[]{307, 308}) {
+            try (ProxyServer server = new ProxyServer("HTTP/1.1 " + code + " Redirect\r\nLocation: /stream\r\n")) {
+                selector.getProxy().clear();
+                addRule("ott.example.com", server.proxy());
+                RequestBody body = new RequestBody() {
+                    @Override public MediaType contentType() { return null; }
+                    @Override public long contentLength() { return 7; }
+                    @Override public boolean isOneShot() { return true; }
+                    @Override public void writeTo(BufferedSink sink) throws java.io.IOException { sink.writeUtf8("payload"); }
+                };
+                try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").post(body).build()).execute()) {
+                    assertEquals(code, response.code());
+                }
+                assertEquals(1, server.requests().size());
+                assertEquals("payload", server.body(0));
+            }
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void missingOrUnsupportedLocationReturnsOriginalResponse() throws Exception {
+        for (String location : List.of("", "Location: ftp://cdn.example.com/file\r\n")) {
+            try (ProxyServer server = new ProxyServer("HTTP/1.1 302 Found\r\n" + location)) {
+                selector.getProxy().clear();
+                addRule("ott.example.com", server.proxy());
+                try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                    assertEquals(302, response.code());
+                }
+                assertEquals(1, server.requests().size());
+            }
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void ruleSwitchOnSameProxyEndpointUsesNewCredentials() throws Exception {
+        String challenge = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=proxy\r\n";
+        try (ProxyServer server = new ProxyServer(challenge,
+                "HTTP/1.1 302 Found\r\nLocation: http://cdn.example.com/stream\r\n", challenge, "HTTP/1.1 200 OK\r\n")) {
+            addRule("ott.example.com", server.proxy(), "source:password");
+            addRule("cdn.example.com", server.proxy(), "target:password");
+            try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                assertEquals(200, response.code());
+            }
+            assertTrue(server.headers(1).contains("Proxy-Authorization: Basic c291cmNlOnBhc3N3b3Jk"));
+            assertFalse(server.headers(2).stream().anyMatch(h -> h.startsWith("Proxy-Authorization:")));
+            assertTrue(server.headers(3).contains("Proxy-Authorization: Basic dGFyZ2V0OnBhc3N3b3Jk"));
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void twentyRedirectsSucceedAndPreserveFullHistory() throws Exception {
+        String[] replies = new String[21];
+        java.util.Arrays.fill(replies, "HTTP/1.1 302 Found\r\nLocation: /stream\r\n");
+        replies[20] = "HTTP/1.1 200 OK\r\n";
+        try (ProxyServer server = new ProxyServer(replies)) {
+            addRule("ott.example.com", server.proxy());
+            try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                assertEquals(200, response.code());
+                int count = 0;
+                for (Response prior = response.priorResponse(); prior != null; prior = prior.priorResponse()) {
+                    assertEquals(302, prior.code());
+                    count++;
+                }
+                assertEquals(20, count);
+            }
+            assertEquals(21, server.requests().size());
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void retriesAndRedirectsShareFollowUpBudget() throws Exception {
+        String[] replies = new String[22];
+        for (int i = 0; i < 20; i += 2) {
+            replies[i] = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 0\r\n";
+            replies[i + 1] = "HTTP/1.1 302 Found\r\nLocation: /stream\r\n";
+        }
+        replies[20] = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 0\r\n";
+        replies[21] = "HTTP/1.1 200 OK\r\n";
+        try (ProxyServer server = new ProxyServer(replies)) {
+            addRule("ott.example.com", server.proxy());
+            assertThrows(ProtocolException.class,
+                    () -> client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute());
+            assertEquals(22, server.requests().size());
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void proxyCredentialsSupportEmptyPasswordColonsAndUtf8() throws Exception {
+        for (String userInfo : List.of("user", "user:pass:word", "用戶:密碼")) {
+            try (ProxyServer server = new ProxyServer("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=proxy\r\n", "HTTP/1.1 200 OK\r\n")) {
+                selector.getProxy().clear();
+                addRule("ott.example.com", server.proxy(), userInfo);
+                try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                    assertEquals(200, response.code());
+                }
+                String plain = userInfo.contains(":") ? userInfo : userInfo + ":";
+                String expected = "Proxy-Authorization: Basic " + java.util.Base64.getEncoder().encodeToString(plain.getBytes(StandardCharsets.UTF_8));
+                assertTrue(server.headers(1).contains(expected));
+            }
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void missingProxyCredentialsReturnsChallengeWithoutRetry() throws Exception {
+        try (ProxyServer server = new ProxyServer("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=proxy\r\n")) {
+            addRule("ott.example.com", server.proxy());
+            try (Response response = client().newCall(new Request.Builder().url("http://ott.example.com/live").build()).execute()) {
+                assertEquals(407, response.code());
+            }
+            assertEquals(1, server.requests().size());
+        }
+    }
+
+    private static Authenticator currentAuthenticator() {
+        // Android's compile-time API omits this JDK method; unit tests run on Java 21.
+        try {
+            return (Authenticator) Authenticator.class.getMethod("getDefault").invoke(null);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     private OkHttpClient client() {
-        return new OkHttpClient.Builder().proxySelector(selector).proxyAuthenticator(new OkAuthenticator(selector)).addInterceptor(new ProxyRedirectInterceptor(selector)).followRedirects(false).connectTimeout(1, TimeUnit.SECONDS).build();
+        return new OkHttpClient.Builder().proxySelector(selector).proxyAuthenticator(new OkAuthenticator(selector)).addInterceptor(new ProxyRedirectInterceptor(selector)).followRedirects(false).connectTimeout(1, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS).callTimeout(10, TimeUnit.SECONDS).build();
     }
 
     private void addRule(String host, java.net.Proxy javaProxy) {
@@ -287,12 +531,14 @@ public class OkProxySelectorTest {
         private final ExecutorService executor;
         private final Future<List<String>> requests;
         private final List<List<String>> headers;
+        private final List<String> bodies;
 
         private ProxyServer(String... replies) throws Exception {
             server = new ServerSocket(0, 2, InetAddress.getLoopbackAddress());
             server.setSoTimeout(3000);
             executor = Executors.newSingleThreadExecutor();
             headers = new ArrayList<>();
+            bodies = new ArrayList<>();
             requests = executor.submit(() -> {
                 List<String> lines = new ArrayList<>();
                 for (String reply : replies) {
@@ -304,6 +550,16 @@ public class OkProxySelectorTest {
                         String header;
                         while ((header = reader.readLine()) != null && !header.isEmpty()) requestHeaders.add(header);
                         headers.add(requestHeaders);
+                        int length = 0;
+                        for (String h : requestHeaders) if (h.regionMatches(true, 0, "Content-Length:", 0, 15)) length = Integer.parseInt(h.substring(15).trim());
+                        char[] body = new char[length];
+                        int offset = 0;
+                        while (offset < length) {
+                            int read = reader.read(body, offset, length - offset);
+                            if (read == -1) throw new java.io.EOFException("Incomplete request body");
+                            offset += read;
+                        }
+                        bodies.add(new String(body));
                         socket.getOutputStream().write((reply + "Content-Length: 0\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
                         socket.getOutputStream().flush();
                     }
@@ -318,6 +574,11 @@ public class OkProxySelectorTest {
 
         private List<String> requests() throws Exception {
             return requests.get(5, TimeUnit.SECONDS);
+        }
+
+        private String body(int index) throws Exception {
+            requests();
+            return bodies.get(index);
         }
 
         private List<String> headers(int index) throws Exception {

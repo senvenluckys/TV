@@ -1,0 +1,64 @@
+name: catvod unit tests
+
+on:
+  push:
+    branches: [fongmi]
+    paths:
+      - 'catvod/**'
+      - 'gradle/**'
+      - '**/*.gradle'
+      - 'gradle.properties'
+      - 'gradlew*'
+      - '.github/workflows/catvod-tests.yml'
+  pull_request:
+    branches: [fongmi]
+    paths:
+      - 'catvod/**'
+      - 'gradle/**'
+      - '**/*.gradle'
+      - 'gradle.properties'
+      - 'gradlew*'
+      - '.github/workflows/catvod-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catvod-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: jetbrains
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Provide local configuration for project evaluation
+        run: |
+          # app is configured even when only catvod tasks are requested.
+          # These placeholders are never used to sign a release.
+          printf 'sdk.dir=%s\nstoreFile=ci-unused.jks\nkeyAlias=ci-unused\nstorePassword=ci-unused\n' "$ANDROID_HOME" > local.properties
+      - name: Build catvod and run JVM tests
+        run: bash gradlew :catvod:assembleDebug :catvod:testDebugUnitTest --no-daemon --stacktrace
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catvod-test-reports
+          path: |
+            catvod/build/reports/tests/
+            catvod/build/test-results/
+          if-no-files-found: warn
+          retention-days: 14
